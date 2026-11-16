@@ -1,0 +1,27 @@
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+
+# --- Configuration (override via CLI, PYTEST_BASE_URL / SAUCE_* env vars) ---
+base_url = "https://www.saucedemo.com"
+# Public demo credentials. For a real system these come from pipeline secrets
+# (SAUCE_USERNAME / SAUCE_PASSWORD env vars take precedence over these values).
+sauce_username = "standard_user"
+sauce_password = "secret_sauce"
+
+# Failure artifacts are written to test-results/ and kept for failed tests only.
+# NOTE: --browser is deliberately NOT here: pytest-playwright appends it, so a
+# default here would run twice when you pass --browser on the CLI.
+addopts = """
+  -ra --strict-markers --strict-config
+  --tracing retain-on-failure
+  --video retain-on-failure
+  --screenshot only-on-failure
+  --output test-results
+"""
+
+markers = [
+  "smoke: fast, business-critical checks (run on every push)",
+  "regression: broader coverage, including negative and edge cases",
+  "no_auth: test starts logged out (skips the shared storage-state login)",
+]

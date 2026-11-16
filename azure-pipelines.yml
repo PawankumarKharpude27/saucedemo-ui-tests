@@ -1,0 +1,102 @@
+# Runs the Playwright suite on every push and PR, one job per browser.
+# Note: the `pr:` trigger works for GitHub repos; for Azure Repos use a branch policy
+# (Build validation) pointing at this pipeline.
+
+trigger:
+  branches:
+    include: ['*']
+
+pr:
+  branches:
+    include: ['*']
+
+parameters:
+  - name: poolType            # pick where the jobs run
+    displayName: Agent pool type
+    type: string
+    default: microsoft
+    values: [microsoft, selfHosted]
+  - name: selfHostedPoolName
+    displayName: Self-hosted pool name (used when poolType = selfHosted)
+    type: string
+    default: Default
+  - name: marker
+    displayName: pytest marker expression (empty = whole suite)
+    type: string
+    default: ''
+
+variables:
+  PIP_CACHE_DIR: $(Pipeline.Workspace)/.pip
+
+pool:
+  ${{ if eq(parameters.poolType, 'microsoft') }}:
+    vmImage: ubuntu-latest
+  ${{ else }}:
+    name: ${{ parameters.selfHostedPoolName }}
+
+jobs:
+  - job: ui_tests
+    displayName: UI tests
+    timeoutInMinutes: 20
+    strategy:
+      maxParallel: 3
+      matrix:
+        chromium:
+          BROWSER: chromium
+        firefox:
+          BROWSER: firefox
+        webkit:
+          BROWSER: webkit
+    steps:
+      - task: UsePythonVersion@0
+        displayName: Use Python 3.12
+        inputs:
+          versionSpec: '3.12'
+
+      - task: Cache@2
+        displayName: Cache pip downloads
+        inputs:
+          key: 'pip | "$(Agent.OS)" | requirements.txt'
+          path: $(PIP_CACHE_DIR)
+
+      - script: python -m pip install -r requirements.txt
+        displayName: Install Python dependencies
+
+      # On Microsoft-hosted agents we may sudo, so let Playwright install OS libraries.
+      # Self-hosted agents are expected to have them baked in (no sudo assumed).
+      - ${{ if eq(parameters.poolType, 'microsoft') }}:
+          - script: python -m playwright install --with-deps $(BROWSER)
+            displayName: Install $(BROWSER) + system dependencies
+      - ${{ else }}:
+          - script: python -m playwright install $(BROWSER)
+            displayName: Install $(BROWSER)
+
+      - script: bash run_tests.sh
+        displayName: Run tests ($(BROWSER))
+        env:
+          BROWSER: $(BROWSER)
+          MARKER: ${{ parameters.marker }}
+
+      - task: PublishTestResults@2
+        displayName: Publish JUnit results
+        condition: succeededOrFailed()
+        inputs:
+          testResultsFormat: JUnit
+          testResultsFiles: 'reports/junit-$(BROWSER).xml'
+          testRunTitle: 'Sauce Demo UI - $(BROWSER)'
+          failTaskOnFailedTests: false   # the run step already fails the job
+
+      - task: PublishPipelineArtifact@1
+        displayName: Publish HTML report
+        condition: succeededOrFailed()
+        inputs:
+          targetPath: reports
+          artifact: 'reports-$(BROWSER)-attempt$(System.JobAttempt)'
+
+      # test-results/ only contains traces, screenshots and videos of FAILED tests.
+      - task: PublishPipelineArtifact@1
+        displayName: Publish failure artifacts (traces, screenshots, videos)
+        condition: failed()
+        inputs:
+          targetPath: test-results
+          artifact: 'failure-artifacts-$(BROWSER)-attempt$(System.JobAttempt)'
